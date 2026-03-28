@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -34,20 +34,27 @@ import CreateKnowledgeDialog, {
   CreateKnowledgePayload,
 } from "./_components/create-knowledge-dialog";
 
-import { apiFetch, readStoredUser } from "@/lib/auth";
+import { apiFetch } from "@/lib/auth";
 
 type KnowledgeItem = {
   id?: string;
   user_id?: string;
   name: string;
   description: string;
-  cover_image?:string;
+  /** 列表接口可为 data:image/...;base64,...，便于直接作为 img src */
+  cover_image?: string;
   chunk_size: number;
   chunk_overlap: number;
   created_at?: number;
   updated_at?: number;
- 
 };
+
+function kbCoverDisplaySrc(cover?: string | null): string | undefined {
+  if (!cover?.trim()) return undefined;
+  if (cover.startsWith("data:image/")) return cover;
+  if (cover.startsWith("http://") || cover.startsWith("https://")) return cover;
+  return undefined;
+}
 
 type KnowledgeListResponse = {
     items: KnowledgeItem[];
@@ -59,7 +66,7 @@ type KnowledgeListResponse = {
 export default function KnowledgePage() {
   const router = useRouter();
   const [items, setItems] = useState<KnowledgeItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  // const [loading, setLoading] = useState(true);
 
   // 搜索：输入框与已应用查询分离，模拟“搜索”按钮行为
   const [searchDraft, setSearchDraft] = useState("");
@@ -119,17 +126,17 @@ export default function KnowledgePage() {
   async function onCreate(payload: CreateKnowledgePayload) {
     const name = payload.name.trim();
     if (!name) return;
-    const next: KnowledgeItem = {
-      name,
-      description: payload.description,
-      cover_image: payload.cover_image,
-      chunk_size: payload.chunk_size,
-      chunk_overlap: payload.chunk_overlap,
-      user_id: readStoredUser()?.id || '',
-    };
-    await apiFetch('/textRag/kb/create', {
-      method: 'POST',
-      body: JSON.stringify(next),
+    const fd = new FormData();
+    fd.append("name", name);
+    fd.append("description", payload.description.trim());
+    fd.append("chunk_size", String(payload.chunk_size));
+    fd.append("chunk_overlap", String(payload.chunk_overlap));
+    if (payload.coverFile) {
+      fd.append("cover_image", payload.coverFile);
+    }
+    await apiFetch("/textRag/kb/create", {
+      method: "POST",
+      body: fd,
     });
     await fetchItems();
     closeCreate();
@@ -160,9 +167,20 @@ export default function KnowledgePage() {
   }
 
   async function onEdit(id: string, payload: CreateKnowledgePayload) {
+    const fd = new FormData();
+    fd.append("name", payload.name.trim());
+    fd.append("description", payload.description.trim());
+    fd.append("chunk_size", String(payload.chunk_size));
+    fd.append("chunk_overlap", String(payload.chunk_overlap));
+    if (payload.coverFile) {
+      fd.append("cover_image", payload.coverFile);
+    }
+    if (payload.removeCover) {
+      fd.append("delete_cover", "true");
+    }
     await apiFetch(`/textRag/kb/update/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
+      method: "PUT",
+      body: fd,
     });
     await fetchItems();
     closeEdit();
@@ -285,12 +303,23 @@ export default function KnowledgePage() {
         {/* 列表 */}
         { items.length > 0 ? (
           <div className="mt-6 grid max-w-5xl gap-4 md:mx-auto grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
-            {items.map((it) => (
+            {items.map((it) => {
+              const coverThumb = kbCoverDisplaySrc(it.cover_image);
+              return (
               <Card key={it.id} className="overflow-hidden">
                 <CardHeader className="grid place-items-center px-6 pb-3 pt-6">
-                  <span className="flex size-11 items-center justify-center rounded-xl bg-muted ring-1 ring-foreground/10">
-                    <FolderOpen aria-hidden size={20} strokeWidth={1.75} />
-                  </span>
+                  {coverThumb ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={coverThumb}
+                      alt=""
+                      className="h-24 w-full max-w-[220px] rounded-xl object-cover ring-1 ring-black/10"
+                    />
+                  ) : (
+                    <span className="flex size-11 items-center justify-center rounded-xl bg-muted ring-1 ring-foreground/10">
+                      <FolderOpen aria-hidden size={20} strokeWidth={1.75} />
+                    </span>
+                  )}
                 </CardHeader>
 
                 <CardContent className="px-6 pb-4">
@@ -333,7 +362,8 @@ export default function KnowledgePage() {
                   </Button>
                 </CardFooter>
               </Card>
-            ))}
+            );
+            })}
           </div>
         ) : null}
 

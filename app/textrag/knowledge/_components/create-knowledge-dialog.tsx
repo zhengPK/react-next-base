@@ -1,6 +1,7 @@
 "use client";
 
-import { SubmitEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,9 +13,12 @@ import { Textarea } from "@/components/ui/textarea";
 export type CreateKnowledgePayload = {
   name: string;
   description: string;
-  cover_image?: string;
   chunk_size: number;
   chunk_overlap: number;
+  /** 本次表单选中的封面文件，随 multipart 上传 */
+  coverFile?: File | null;
+  /** 编辑时请求后端删除已有封面（与 coverFile 互斥：选新文件时会自动清除此标记） */
+  removeCover?: boolean;
 };
 
 
@@ -67,9 +71,8 @@ export default function CreateKnowledgeDialog({
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [cover_image, setcover_image] = useState<string | undefined>(
-    undefined
-  );
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [removeCover, setRemoveCover] = useState(false);
   const [chunk_size, setchunk_size] = useState(512);
   const [chunk_overlap, setchunk_overlap] = useState(50);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -85,16 +88,17 @@ export default function CreateKnowledgeDialog({
       if (mode === "edit" && knowledge) {
         setName(knowledge.name ?? "");
         setDescription(knowledge.description ?? "");
-        setcover_image(knowledge.cover_image);
         setchunk_size(knowledge.chunk_size ?? 512);
         setchunk_overlap(knowledge.chunk_overlap ?? 50);
       } else {
         setName("");
         setDescription("");
-        setcover_image(undefined);
         setchunk_size(512);
         setchunk_overlap(50);
       }
+      setCoverFile(null);
+      setRemoveCover(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       setFileError(null);
       firstInputRef.current?.focus();
     }, 0);
@@ -109,38 +113,54 @@ export default function CreateKnowledgeDialog({
   function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) {
-      setcover_image(undefined);
+      setCoverFile(null);
       setFileError(null);
       return;
     }
 
     if (!ALLOWED_TYPES.includes(f.type)) {
       setFileError("封面图片格式不正确，仅支持 JPG/PNG/GIF/WEBP");
-      setcover_image(undefined);
+      setCoverFile(null);
       return;
     }
 
     const maxBytes = 5 * 1024 * 1024;
     if (f.size > maxBytes) {
       setFileError("封面图片大小超过 5MB");
-      setcover_image(undefined);
+      setCoverFile(null);
       return;
     }
 
     setFileError(null);
-    setcover_image(f.name);
+    setRemoveCover(false);
+    setCoverFile(f);
   }
 
-  function submit(e: SubmitEvent) {
+  function clearSelectedFile() {
+    setCoverFile(null);
+    setFileError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  const coverHint = useMemo(() => {
+    if (coverFile) return coverFile.name;
+    if (mode === "edit" && removeCover) return "提交后将移除封面";
+    if (mode === "edit" && knowledge?.cover_image)
+      return "已设置封面（可选新图片替换）";
+    return "未选择文件";
+  }, [coverFile, mode, removeCover, knowledge?.cover_image]);
+
+  function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!canCreate) return;
 
     const payload: CreateKnowledgePayload = {
       name: name.trim(),
       description: description.trim(),
-      cover_image,
       chunk_size,
       chunk_overlap,
+      coverFile: coverFile ?? undefined,
+      removeCover: mode === "edit" ? removeCover && !coverFile : undefined,
     };
 
     if (mode === "edit") {
@@ -238,8 +258,44 @@ export default function CreateKnowledgeDialog({
                   选择文件
                 </Button>
                 <span className="truncate text-sm text-[color-mix(in_oklch,var(--dream-ink)_60%,transparent)]">
-                  {cover_image ?? "未选择文件"}
+                  {coverHint}
                 </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {coverFile ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={clearSelectedFile}
+                    className="h-9 rounded-xl text-sm"
+                  >
+                    清除所选文件
+                  </Button>
+                ) : null}
+                {mode === "edit" && knowledge?.cover_image ? (
+                  removeCover ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setRemoveCover(false)}
+                      className="h-9 rounded-xl text-sm"
+                    >
+                      保留原封面
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        clearSelectedFile();
+                        setRemoveCover(true);
+                      }}
+                      className="h-9 rounded-xl text-sm"
+                    >
+                      移除封面
+                    </Button>
+                  )
+                ) : null}
               </div>
               <p className="text-xs text-[color-mix(in_oklch,var(--dream-ink)_55%,transparent)]">
                 支持 JPG, PNG, GIF, WEBP 格式，最大 5MB
@@ -255,11 +311,6 @@ export default function CreateKnowledgeDialog({
                 </Alert>
               ) : null}
 
-              {cover_image ? (
-                <p className="text-xs text-[color-mix(in_oklch,var(--dream-ink)_60%,transparent)]">
-                  已选择：{cover_image}
-                </p>
-              ) : null}
             </div>
 
             <div className="grid gap-5 sm:grid-cols-2">
