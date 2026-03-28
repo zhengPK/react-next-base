@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -63,6 +64,20 @@ type KnowledgeListResponse = {
     page_size: number;
 };
 
+type SortField = "updatedAt" | "createdAt" | "name";
+type SortDir = "desc" | "asc";
+
+const SORT_FIELD_LABEL: Record<SortField, string> = {
+  createdAt: "创建时间",
+  updatedAt: "更新时间",
+  name: "名称",
+};
+
+const SORT_DIR_LABEL: Record<SortDir, string> = {
+  desc: "降序",
+  asc: "升序",
+};
+
 export default function KnowledgePage() {
   const router = useRouter();
   const [items, setItems] = useState<KnowledgeItem[]>([]);
@@ -70,19 +85,16 @@ export default function KnowledgePage() {
 
   // 搜索：输入框与已应用查询分离，模拟“搜索”按钮行为
   const [searchDraft, setSearchDraft] = useState("");
-  const [searchApplied, setSearchApplied] = useState("");
 
-  const [sortField, setSortField] = useState<
-    "updatedAt" | "createdAt" | "name"
-  >("createdAt");
-  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+  const [sortField, setSortField] = useState<SortField>("createdAt");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<KnowledgeItem | null>(null);
-  const fetchItems = async ()=>{
+  const fetchItems = async (search: string='', sortField: SortField='createdAt', sortDir: SortDir='desc')=>{
     const abortController = new AbortController();
-    const res = await apiFetch('/textRag/kb/list', {
+    const res = await apiFetch(`/textRag/kb/list?search=${search}&sort_by=${sortField}&sort_order=${sortDir}`, {
       method: 'GET',
       signal: abortController.signal,
     });
@@ -91,13 +103,19 @@ export default function KnowledgePage() {
       message?: string;
       data?: KnowledgeListResponse;
     };
-    console.log("resData列表数据",resData);
     if (resData.code === 200 && resData.data) {
       setItems(resData.data?.items || []);
     }
     return () => {
       abortController.abort(); // 取消请求
     };
+  }
+  const handleSearch = async ()=>{
+    console.log("searchDraft", searchDraft);
+    console.log("sortField", sortField);
+    console.log("sortDir", sortDir);
+    debugger
+    await fetchItems(searchDraft.trim(), sortField, sortDir);
   }
   useEffect(() => {
     
@@ -221,7 +239,7 @@ export default function KnowledgePage() {
         {/* 筛选条 */}
         <div className="mb-4 rounded-2xl border border-[color-mix(in_oklch,var(--dream-ink)_10%,transparent)] bg-white/70 p-4 shadow-sm">
           <div className="grid gap-3 md:grid-cols-[1.4fr_0.9fr_0.8fr_auto] md:items-end">
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               <label className="sr-only">搜索</label>
               <div className="relative">
                 <Search
@@ -237,50 +255,70 @@ export default function KnowledgePage() {
               </div>
             </div>
 
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-neutral-600">
                 排序字段
               </label>
               <Select
                 value={sortField}
-                onValueChange={(v) =>
-                  setSortField((v ?? "createdAt") as typeof sortField)
-                }
+                onValueChange={(v) => {
+                  if (v === "createdAt" || v === "updatedAt" || v === "name") {
+                    setSortField(v);
+                  }
+                }}
               >
                 <SelectTrigger className="h-10 w-full rounded-xl border border-[color-mix(in_oklch,var(--dream-ink)_10%,transparent)] bg-white/90 px-3 text-sm outline-none transition focus:border-[color-mix(in_oklch,var(--dream-teal)_45%,transparent)] focus:ring-2 focus:ring-[color-mix(in_oklch,var(--dream-teal)_20%,transparent)]">
-                  <SelectValue />
+                  <SelectValue>
+                    {(v) =>
+                      v != null && SORT_FIELD_LABEL[v as SortField]
+                        ? SORT_FIELD_LABEL[v as SortField]
+                        : SORT_FIELD_LABEL.createdAt
+                    }
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="rounded-xl">
-                  <SelectItem value="createdAt">创建时间</SelectItem>
-                  <SelectItem value="updatedAt">更新时间</SelectItem>
-                  <SelectItem value="name">名称</SelectItem>
+                  <SelectGroup>
+                    <SelectItem value="createdAt">创建时间</SelectItem>
+                    <SelectItem value="updatedAt">更新时间</SelectItem>
+                    <SelectItem value="name">名称</SelectItem>
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-neutral-600">
                 排序方向
               </label>
               <Select
                 value={sortDir}
-                onValueChange={(v) =>
-                  setSortDir((v ?? "desc") as typeof sortDir)
-                }
+                onValueChange={(v) => {
+                  if (v === "asc" || v === "desc") {
+                    setSortDir(v);
+                  }
+                }}
               >
                 <SelectTrigger className="h-10 w-full rounded-xl border border-[color-mix(in_oklch,var(--dream-ink)_10%,transparent)] bg-white/90 px-3 text-sm outline-none transition focus:border-[color-mix(in_oklch,var(--dream-teal)_45%,transparent)] focus:ring-2 focus:ring-[color-mix(in_oklch,var(--dream-teal)_20%,transparent)]">
-                  <SelectValue />
+                  <SelectValue>
+                    {(v) =>
+                      v != null && SORT_DIR_LABEL[v as SortDir]
+                        ? SORT_DIR_LABEL[v as SortDir]
+                        : SORT_DIR_LABEL.desc
+                    }
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="rounded-xl">
-                  <SelectItem value="desc">降序</SelectItem>
-                  <SelectItem value="asc">升序</SelectItem>
+                  <SelectGroup>
+                    <SelectItem value="desc">降序</SelectItem>
+                    <SelectItem value="asc">升序</SelectItem>
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </div>
 
             <div className="flex justify-end">
               <Button
-                onClick={() => setSearchApplied(searchDraft)}
+                onClick={() => handleSearch()}
                 className="h-10 rounded-xl bg-blue-600 px-4 text-white hover:bg-blue-700"
               >
                 <Search className="mr-2 size-4" aria-hidden />
