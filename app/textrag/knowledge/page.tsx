@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   FolderOpen,
   Info,
+  Loader2,
   LogIn,
   Search,
   Pencil,
@@ -30,6 +31,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import CreateKnowledgeDialog, {
   CreateKnowledgePayload,
@@ -81,7 +93,8 @@ const SORT_DIR_LABEL: Record<SortDir, string> = {
 export default function KnowledgePage() {
   const router = useRouter();
   const [items, setItems] = useState<KnowledgeItem[]>([]);
-  // const [loading, setLoading] = useState(true);
+  /** 列表区域加载中（首屏、搜索、创建/编辑后刷新） */
+  const [listLoading, setListLoading] = useState(true);
 
   // 搜索：输入框与已应用查询分离，模拟“搜索”按钮行为
   const [searchDraft, setSearchDraft] = useState("");
@@ -92,44 +105,56 @@ export default function KnowledgePage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<KnowledgeItem | null>(null);
-  const fetchItems = async (search: string='', sortField: SortField='createdAt', sortDir: SortDir='desc')=>{
-    const abortController = new AbortController();
-    const res = await apiFetch(`/textRag/kb/list?search=${search}&sort_by=${sortField}&sort_order=${sortDir}`, {
-      method: 'GET',
-      signal: abortController.signal,
-    });
-    const resData = (await res.json()) as {
-      code?: number;
-      message?: string;
-      data?: KnowledgeListResponse;
-    };
-    if (resData.code === 200 && resData.data) {
-      setItems(resData.data?.items || []);
+  /** 待确认删除的知识库（AlertDialog 受控） */
+  const [deleteTarget, setDeleteTarget] = useState<KnowledgeItem | null>(null);
+  async function fetchItems(
+    search: string = "",
+    sortField: SortField = "createdAt",
+    sortDir: SortDir = "desc",
+    options?: { signal?: AbortSignal; showLoading?: boolean }
+  ) {
+    const showLoading = options?.showLoading ?? true;
+    const signal = options?.signal;
+    if (showLoading) setListLoading(true);
+    try {
+      const q = encodeURIComponent(search);
+      const res = await apiFetch(
+        `/textRag/kb/list?search=${q}&sort_by=${sortField}&sort_order=${sortDir}`,
+        {
+          method: "GET",
+          signal,
+        }
+      );
+      const resData = (await res.json()) as {
+        code?: number;
+        message?: string;
+        data?: KnowledgeListResponse;
+      };
+      if (signal?.aborted) return;
+      if (resData.code === 200 && resData.data) {
+        setItems(resData.data.items || []);
+      }
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") return;
+      throw e;
+    } finally {
+      if (
+        showLoading &&
+        (!signal || !signal.aborted)
+      ) {
+        setListLoading(false);
+      }
     }
-    return () => {
-      abortController.abort(); // 取消请求
-    };
   }
-  const handleSearch = async ()=>{
-    console.log("searchDraft", searchDraft);
-    console.log("sortField", sortField);
-    console.log("sortDir", sortDir);
-    debugger
+
+  async function handleSearch() {
     await fetchItems(searchDraft.trim(), sortField, sortDir);
   }
+
   useEffect(() => {
-    
-    let abort: ()=>void;
-    const fetchData = async () => {
-      abort = await fetchItems();
-    }
-
-    fetchData()
-  
-    return () => {
-      abort?.(); // 取消请求
-    };
-
+    const ac = new AbortController();
+    void fetchItems("", "createdAt", "desc", { signal: ac.signal });
+    return () => ac.abort();
   }, []);
 
 
@@ -160,10 +185,12 @@ export default function KnowledgePage() {
     closeCreate();
   }
 
-  async function onDelete(id: string) {
-    // setItems((prev) => prev.filter((it) => it.id !== id));
+  async function confirmDeleteKnowledge() {
+    if (!deleteTarget?.id) return;
+    const id = deleteTarget.id;
+    setDeleteTarget(null);
     const res = await apiFetch(`/textRag/kb/delete/${id}`, {
-      method: 'DELETE',
+      method: "DELETE",
     });
     const resData = (await res.json()) as {
       code?: number;
@@ -328,82 +355,107 @@ export default function KnowledgePage() {
           </div>
         </div>
 
-        {/* 空状态提示 */}
-        {items.length === 0 ? (
-          <div className="mb-6 flex items-start gap-3 rounded-xl border border-sky-200/80 bg-sky-50/90 px-4 py-3 text-sm text-sky-950 shadow-sm">
-            <Info className="mt-0.5 size-5 shrink-0 text-sky-600" aria-hidden />
-            <div>
-              还没有知识库，点击上方按钮创建一个吧！
+        {/* 列表区域：加载中 / 空状态 / 卡片网格 */}
+        <section
+          className="mt-6 min-h-[240px] rounded-2xl border border-[color-mix(in_oklch,var(--dream-ink)_8%,transparent)] bg-white/40"
+          aria-busy={listLoading}
+          aria-live="polite"
+        >
+          {listLoading ? (
+            <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 py-12">
+              <Loader2
+                className="size-9 text-sky-600 motion-safe:animate-spin"
+                aria-hidden
+              />
+              <p className="text-sm text-neutral-600">正在加载知识库列表…</p>
             </div>
-          </div>
-        ) : null}
+          ) : items.length === 0 ? (
+            <div className="p-4 md:p-6">
+              <div className="flex items-start gap-3 rounded-xl border border-sky-200/80 bg-sky-50/90 px-4 py-3 text-sm text-sky-950 shadow-sm">
+                <Info
+                  className="mt-0.5 size-5 shrink-0 text-sky-600"
+                  aria-hidden
+                />
+                <div>还没有知识库，点击上方按钮创建一个吧！</div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 md:p-6">
+              <div className="grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 md:mx-auto md:grid-cols-3">
+                {items.map((it) => {
+                  const coverThumb = kbCoverDisplaySrc(it.cover_image);
+                  return (
+                    <Card key={it.id} className="overflow-hidden">
+                      <CardHeader className="grid place-items-center px-6 pb-3 pt-6">
+                        {coverThumb ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={coverThumb}
+                            alt=""
+                            className="h-24 w-full max-w-[220px] rounded-xl object-cover ring-1 ring-black/10"
+                          />
+                        ) : (
+                          <span className="flex size-11 items-center justify-center rounded-xl bg-muted ring-1 ring-foreground/10">
+                            <FolderOpen
+                              aria-hidden
+                              size={20}
+                              strokeWidth={1.75}
+                            />
+                          </span>
+                        )}
+                      </CardHeader>
 
-        {/* 列表 */}
-        { items.length > 0 ? (
-          <div className="mt-6 grid max-w-5xl gap-4 md:mx-auto grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
-            {items.map((it) => {
-              const coverThumb = kbCoverDisplaySrc(it.cover_image);
-              return (
-              <Card key={it.id} className="overflow-hidden">
-                <CardHeader className="grid place-items-center px-6 pb-3 pt-6">
-                  {coverThumb ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={coverThumb}
-                      alt=""
-                      className="h-24 w-full max-w-[220px] rounded-xl object-cover ring-1 ring-black/10"
-                    />
-                  ) : (
-                    <span className="flex size-11 items-center justify-center rounded-xl bg-muted ring-1 ring-foreground/10">
-                      <FolderOpen aria-hidden size={20} strokeWidth={1.75} />
-                    </span>
-                  )}
-                </CardHeader>
+                      <CardContent className="px-6 pb-4">
+                        <CardTitle className="flex items-center gap-2 p-0 text-base">
+                          <FolderOpen
+                            aria-hidden
+                            size={16}
+                            strokeWidth={1.75}
+                          />
+                          <span className="truncate">{it.name}</span>
+                        </CardTitle>
+                      </CardContent>
 
-                <CardContent className="px-6 pb-4">
-                  <CardTitle className="flex items-center gap-2 p-0 text-base">
-                    <FolderOpen aria-hidden size={16} strokeWidth={1.75} />
-                    <span className="truncate">{it.name}</span>
-                  </CardTitle>
-                </CardContent>
+                      <CardFooter className="gap-3 border-t-0 bg-transparent px-6 py-4">
+                        <Button
+                          size="lg"
+                          className="flex-1 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+                          onClick={() => {
+                            router.push(`/textrag/knowledge/${it.id}`);
+                          }}
+                        >
+                          <LogIn data-icon="inline-start" aria-hidden />
+                          进入
+                        </Button>
 
-                <CardFooter className="gap-3 border-t-0 bg-transparent px-6 py-4">
-                  <Button
-                    size="lg"
-                    className="flex-1 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
-                    onClick={() => {
-                      router.push(`/textrag/knowledge/${it.id}`);
-                    }}
-                  >
-                    <LogIn data-icon="inline-start" aria-hidden />
-                    进入
-                  </Button>
+                        <Button
+                          size="lg"
+                          variant="secondary"
+                          className="flex-1 rounded-xl bg-yellow-500 text-black hover:bg-yellow-600"
+                          onClick={() => openEdit(it)}
+                        >
+                          <Pencil data-icon="inline-start" aria-hidden />
+                          编辑
+                        </Button>
 
-                  <Button
-                    size="lg"
-                    variant="secondary"
-                    className="flex-1 rounded-xl bg-yellow-500 text-black hover:bg-yellow-600"
-                    onClick={() => openEdit(it)}
-                  >
-                    <Pencil data-icon="inline-start" aria-hidden />
-                    编辑
-                  </Button>
-
-                  <Button
-                    size="lg"
-                    variant="destructive"
-                    className="flex-1 rounded-xl bg-red-500 text-white hover:bg-red-600"
-                    onClick={() => onDelete(it.id!)}
-                  >
-                    <Trash2 data-icon="inline-start" aria-hidden />
-                    删除
-                  </Button>
-                </CardFooter>
-              </Card>
-            );
-            })}
-          </div>
-        ) : null}
+                        <Button
+                          size="lg"
+                          variant="destructive"
+                          className="flex-1 rounded-xl bg-red-500 text-white hover:bg-red-600"
+                          type="button"
+                          onClick={() => setDeleteTarget(it)}
+                        >
+                          <Trash2 data-icon="inline-start" aria-hidden />
+                          删除
+                        </Button>
+                      </CardFooter>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* 创建弹窗 */}
         <CreateKnowledgeDialog
@@ -424,6 +476,37 @@ export default function KnowledgePage() {
           knowledge={editTarget}
           onEdit={onEdit}
         />
+
+        <AlertDialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null);
+          }}
+        >
+          <AlertDialogContent className="sm:max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogMedia>
+                <Trash2 aria-hidden />
+              </AlertDialogMedia>
+              <AlertDialogTitle>删除知识库</AlertDialogTitle>
+              <AlertDialogDescription>
+                确定删除知识库「{deleteTarget?.name ?? ""}」？其中的文档与配置将一并删除，此操作不可恢复。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel type="button">取消</AlertDialogCancel>
+              <AlertDialogAction
+                type="button"
+                variant="destructive"
+                onClick={() => {
+                  void confirmDeleteKnowledge();
+                }}
+              >
+                删除
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

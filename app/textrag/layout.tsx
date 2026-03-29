@@ -121,13 +121,13 @@ export default function RootLayout({
                   <MessageCircle className="size-4" aria-hidden />
                   聊天
                 </Link>
-                <Link
+                {/* <Link
                   href="/textrag/settings"
                   className={pathname?.startsWith("/textrag/settings") ? `${navLinkClass} bg-white/12 text-white` : navLinkClass}
                 >
                   <Settings className="size-4" aria-hidden />
                   设置
-                </Link>
+                </Link> */}
               </>
             ) : null}
           </nav>
