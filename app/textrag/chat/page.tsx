@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Loader2, MessageCircle, Plus, Send, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { FileText, Loader2, Menu, MessageCircle, Plus, Send, Trash2, X } from "lucide-react";
 
 import {
   AlertDialog,
@@ -80,6 +80,165 @@ function mapApiSession(s: ChatSessionApi, messages: ChatMessage[] = []): ChatSes
   };
 }
 
+type SessionListAsideProps = {
+  listError: string | null;
+  actionError: string | null;
+  kbListError: string | null;
+  onNewChat: () => void | Promise<void>;
+  newChatLoading: boolean;
+  listLoading: boolean;
+  onOpenClearAll: () => void;
+  sortedSessions: ChatSession[];
+  activeSessionId: string | null;
+  onSelectSession: (sessionId: string) => void | Promise<void>;
+  onRequestDelete: (e: MouseEvent<HTMLButtonElement>, sessionId: string, title: string) => void;
+  sessionsCount: number;
+  onMobileClose?: () => void;
+  /** 会话列表滚动区域高度类：抽屉内用 flex 占满剩余空间 */
+  sessionListScrollClassName?: string;
+};
+
+function SessionListAside({
+  listError,
+  actionError,
+  kbListError,
+  onNewChat,
+  newChatLoading,
+  listLoading,
+  onOpenClearAll,
+  sortedSessions,
+  activeSessionId,
+  onSelectSession,
+  onRequestDelete,
+  sessionsCount,
+  onMobileClose,
+  sessionListScrollClassName = "max-h-[60vh]",
+}: SessionListAsideProps) {
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {onMobileClose ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="-ml-1 size-9 shrink-0 lg:hidden"
+              onClick={onMobileClose}
+              aria-label="关闭会话列表"
+            >
+              <X className="size-5" aria-hidden />
+            </Button>
+          ) : null}
+          <MessageCircle className="size-5 shrink-0 text-sky-600" strokeWidth={1.75} aria-hidden />
+          <span className="truncate text-sm font-semibold text-neutral-900">聊天会话</span>
+        </div>
+        <Button
+          size="sm"
+          className="h-8 shrink-0 rounded-xl bg-blue-600 px-3 text-white hover:bg-blue-700"
+          onClick={() => void onNewChat()}
+          disabled={newChatLoading || listLoading}
+        >
+          {newChatLoading ? (
+            <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Plus className="mr-1" aria-hidden />
+          )}
+          新建
+        </Button>
+      </div>
+
+      {listError ? (
+        <div className="mt-3 rounded-xl border border-red-100 bg-red-50/80 p-3 text-xs text-red-800">{listError}</div>
+      ) : null}
+      {actionError ? (
+        <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/80 p-3 text-xs text-amber-900">
+          {actionError}
+        </div>
+      ) : null}
+      {kbListError ? (
+        <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/80 p-3 text-xs text-amber-900">
+          知识库列表：{kbListError}
+        </div>
+      ) : null}
+
+      <div className="mt-5 rounded-xl border border-black/5 bg-white/70 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-neutral-600">对话</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-neutral-600 hover:bg-neutral-100"
+            onClick={onOpenClearAll}
+            disabled={sessionsCount === 0 || listLoading}
+          >
+            <Trash2 className="mr-1" aria-hidden />
+            清空所有
+          </Button>
+        </div>
+
+        <div
+          className={["mt-3 flex flex-col gap-2 overflow-y-auto pr-1", sessionListScrollClassName].join(" ")}
+        >
+          {listLoading ? (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-black/5 bg-neutral-50/60 p-4 text-xs text-neutral-600">
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+              加载会话…
+            </div>
+          ) : null}
+
+          {!listLoading && sortedSessions.length === 0 ? (
+            <div className="rounded-xl border border-black/5 bg-neutral-50/60 p-3 text-xs text-neutral-600">
+              还没有会话，点击“新建”开始。
+            </div>
+          ) : null}
+
+          {sortedSessions.map((s) => {
+            const isActive = s.id === activeSessionId;
+            const preview =
+              s.messages.length > 0 ? s.messages[s.messages.length - 1].content : "暂无消息";
+            return (
+              <div
+                key={s.id}
+                className={[
+                  "group flex w-full items-start justify-between gap-2 rounded-xl border p-3 text-left transition",
+                  isActive
+                    ? "border-blue-200 bg-blue-50/60"
+                    : "border-transparent bg-white/60 hover:border-black/5 hover:bg-white",
+                ].join(" ")}
+              >
+                <button
+                  type="button"
+                  onClick={() => void onSelectSession(s.id)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <FileText className="size-4 shrink-0 text-sky-600 opacity-80" aria-hidden />
+                    <span className="truncate text-sm font-medium text-neutral-900">{s.title}</span>
+                  </div>
+                  <div className="mt-1 truncate text-xs text-neutral-500">{preview}</div>
+                </button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 text-neutral-400 opacity-0 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
+                  title="删除会话"
+                  onClick={(e) => onRequestDelete(e, s.id, s.title)}
+                  disabled={listLoading}
+                  aria-label="删除会话"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
 /** Select 用：与真实知识库 id 不冲突的哨兵，表示不绑定知识库、直连大模型 */
 const NO_KNOWLEDGE_SELECT_VALUE = "__no_knowledge__";
 
@@ -105,6 +264,7 @@ export default function ChatPage() {
   const [clearAllDialogOpen, setClearAllDialogOpen] = useState(false);
   const [kbListLoading, setKbListLoading] = useState(true);
   const [kbListError, setKbListError] = useState<string | null>(null);
+  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
 
   const draftTrimmed = draft.trim();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -171,6 +331,7 @@ export default function ChatPage() {
     setActiveSessionId(sessionId);
     setDetailLoading(true);
     setActionError(null);
+    setMobileSessionsOpen(false);
     try {
       const detail = await getChatSession(sessionId);
       setSessions((prev) =>
@@ -232,6 +393,15 @@ export default function ChatPage() {
     return () => abortRef.current?.abort();
   }, []);
 
+  useEffect(() => {
+    if (!mobileSessionsOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileSessionsOpen]);
+
   const onNewChat = useCallback(async () => {
     setNewChatLoading(true);
     setActionError(null);
@@ -241,6 +411,7 @@ export default function ChatPage() {
       setSessions((prev) => [next, ...prev.filter((s) => s.id !== created.id)]);
       setActiveSessionId(created.id);
       setSelectedKnowledgeId(null);
+      setMobileSessionsOpen(false);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "新建会话失败");
     } finally {
@@ -261,7 +432,7 @@ export default function ChatPage() {
   }, [loadSessionList]);
 
   const requestDeleteSession = useCallback(
-    (e: React.MouseEvent, sessionId: string, title: string) => {
+    (e: MouseEvent<HTMLButtonElement>, sessionId: string, title: string) => {
       e.stopPropagation();
       setDeleteSessionTarget({ id: sessionId, title });
     },
@@ -398,133 +569,86 @@ export default function ChatPage() {
   return (
     <div className="dream-grain relative">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-        <div className="flex gap-4">
-          {/* 左侧会话 */}
-          <aside className="w-[280px] rounded-2xl border border-black/5 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <MessageCircle className="size-5 text-sky-600" strokeWidth={1.75} aria-hidden />
-                <span className="text-sm font-semibold text-neutral-900">聊天会话</span>
-              </div>
-              <Button
-                size="sm"
-                className="h-8 rounded-xl bg-blue-600 px-3 text-white hover:bg-blue-700"
-                onClick={() => void onNewChat()}
-                disabled={newChatLoading || listLoading}
-              >
-                {newChatLoading ? (
-                  <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
-                ) : (
-                  <Plus className="mr-1" aria-hidden />
-                )}
-                新建
-              </Button>
-            </div>
-
-            {listError ? (
-              <div className="mt-3 rounded-xl border border-red-100 bg-red-50/80 p-3 text-xs text-red-800">
-                {listError}
-              </div>
-            ) : null}
-            {actionError ? (
-              <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/80 p-3 text-xs text-amber-900">
-                {actionError}
-              </div>
-            ) : null}
-            {kbListError ? (
-              <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/80 p-3 text-xs text-amber-900">
-                知识库列表：{kbListError}
-              </div>
-            ) : null}
-
-            <div className="mt-5 rounded-xl border border-black/5 bg-white/70 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs font-medium text-neutral-600">对话</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs text-neutral-600 hover:bg-neutral-100"
-                  onClick={() => setClearAllDialogOpen(true)}
-                  disabled={sessions.length === 0 || listLoading}
-                >
-                  <Trash2 className="mr-1" aria-hidden />
-                  清空所有
-                </Button>
-              </div>
-
-              <div className="mt-3 flex max-h-[60vh] flex-col gap-2 overflow-y-auto pr-1">
-                {listLoading ? (
-                  <div className="flex items-center justify-center gap-2 rounded-xl border border-black/5 bg-neutral-50/60 p-4 text-xs text-neutral-600">
-                    <Loader2 className="size-4 animate-spin" aria-hidden />
-                    加载会话…
-                  </div>
-                ) : null}
-
-                {!listLoading && sortedSessions.length === 0 ? (
-                  <div className="rounded-xl border border-black/5 bg-neutral-50/60 p-3 text-xs text-neutral-600">
-                    还没有会话，点击“新建”开始。
-                  </div>
-                ) : null}
-
-                {sortedSessions.map((s) => {
-                  const isActive = s.id === activeSessionId;
-                  const preview =
-                    s.messages.length > 0
-                      ? s.messages[s.messages.length - 1].content
-                      : "暂无消息";
-                  return (
-                    <div
-                      key={s.id}
-                      className={[
-                        "group flex w-full items-start justify-between gap-2 rounded-xl border p-3 text-left transition",
-                        isActive ? "border-blue-200 bg-blue-50/60" : "border-transparent bg-white/60 hover:border-black/5 hover:bg-white",
-                      ].join(" ")}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => void selectSession(s.id)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText className="size-4 shrink-0 text-sky-600 opacity-80" aria-hidden />
-                          <span className="truncate text-sm font-medium text-neutral-900">{s.title}</span>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-neutral-500">{preview}</div>
-                      </button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 shrink-0 text-neutral-400 opacity-0 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
-                        title="删除会话"
-                        onClick={(e) => requestDeleteSession(e, s.id, s.title)}
-                        disabled={listLoading}
-                        aria-label="删除会话"
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+        <div className="flex min-w-0 flex-col gap-4 lg:flex-row">
+          {/* 左侧会话：大屏展示；小屏隐藏，通过顶栏菜单打开抽屉 */}
+          <aside className="hidden w-[280px] shrink-0 rounded-2xl border border-black/5 bg-white p-4 shadow-sm lg:block">
+            <SessionListAside
+              listError={listError}
+              actionError={actionError}
+              kbListError={kbListError}
+              onNewChat={onNewChat}
+              newChatLoading={newChatLoading}
+              listLoading={listLoading}
+              onOpenClearAll={() => setClearAllDialogOpen(true)}
+              sortedSessions={sortedSessions}
+              activeSessionId={activeSessionId}
+              onSelectSession={selectSession}
+              onRequestDelete={requestDeleteSession}
+              sessionsCount={sessions.length}
+            />
           </aside>
 
+          {mobileSessionsOpen ? (
+            <div
+              className="fixed inset-0 z-50 flex lg:hidden"
+              role="dialog"
+              aria-modal="true"
+              aria-label="聊天会话列表"
+            >
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/40"
+                aria-label="关闭会话列表"
+                onClick={() => setMobileSessionsOpen(false)}
+              />
+              <aside className="relative z-10 h-full w-[min(300px,88vw)] min-w-0 overflow-y-auto border-r border-black/5 bg-white shadow-xl">
+                <div className="p-4">
+                  <SessionListAside
+                    listError={listError}
+                    actionError={actionError}
+                    kbListError={kbListError}
+                    onNewChat={onNewChat}
+                    newChatLoading={newChatLoading}
+                    listLoading={listLoading}
+                    onOpenClearAll={() => setClearAllDialogOpen(true)}
+                    sortedSessions={sortedSessions}
+                    activeSessionId={activeSessionId}
+                    onSelectSession={selectSession}
+                    onRequestDelete={requestDeleteSession}
+                    sessionsCount={sessions.length}
+                    onMobileClose={() => setMobileSessionsOpen(false)}
+                    sessionListScrollClassName="max-h-[calc(100dvh-12rem)]"
+                  />
+                </div>
+              </aside>
+            </div>
+          ) : null}
+
           {/* 右侧聊天 */}
-          <section className="flex flex-1 flex-col rounded-2xl border border-black/5 bg-white shadow-sm">
-            <div className="flex items-center justify-between gap-4 border-b border-black/5 px-5 py-4">
-              <div className="flex items-center gap-3">
-                <span className="flex size-10 items-center justify-center rounded-xl bg-sky-50 ring-1 ring-black/5">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border border-black/5 bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-black/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5 sm:py-4">
+              <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-10 shrink-0 rounded-xl border-black/10 lg:hidden"
+                  onClick={() => setMobileSessionsOpen(true)}
+                  aria-label="打开会话列表"
+                >
+                  <Menu className="size-5 text-neutral-700" aria-hidden />
+                </Button>
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 ring-1 ring-black/5">
                   <MessageCircle className="size-5 text-sky-600" strokeWidth={1.75} aria-hidden />
                 </span>
-                <div>
-                  <h2 className="font-[family-name:var(--font-syne)] text-base font-bold text-[var(--dream-ink)]">
+                <div className="min-w-0">
+                  <h2 className="font-[family-name:var(--font-syne)] truncate text-base font-bold text-[var(--dream-ink)]">
                     对话
                   </h2>
                 </div>
               </div>
 
-              <div className="min-w-[240px]">
+              <div className="w-full min-w-0 sm:w-auto sm:min-w-[200px] md:min-w-[240px]">
                 <Select
                   value={selectedKnowledgeId ?? NO_KNOWLEDGE_SELECT_VALUE}
                   onValueChange={(v) =>
