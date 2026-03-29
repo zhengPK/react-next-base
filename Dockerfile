@@ -11,6 +11,9 @@ WORKDIR /app
 # 启用 corepack 并固定 pnpm 9，与仓库 pnpm-lock.yaml 版本一致
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
+# 使用国内镜像拉取依赖，降低访问 registry.npmjs.org 超时概率（多阶段构建中每阶段需单独设置）
+RUN pnpm config set registry https://registry.npmmirror.com
+
 # 仅复制清单文件，依赖不变时这一层可缓存，避免重复安装
 COPY package.json pnpm-lock.yaml ./
 # 按锁文件安装依赖，保证与本地一致
@@ -22,6 +25,9 @@ WORKDIR /app
 
 # 构建阶段同样需要 pnpm 执行 next build
 RUN corepack enable && corepack prepare pnpm@9 --activate
+
+# 与 deps 阶段一致，避免构建过程中若需访问 registry 仍走官方源导致超时
+RUN pnpm config set registry https://registry.npmmirror.com
 
 # 从 deps 阶段复制已安装的 node_modules，无需再次 install
 COPY --from=deps /app/node_modules ./node_modules
