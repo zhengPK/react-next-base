@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import {
   FileText,
   FileUp,
+  Info,
   LayoutList,
   Loader2,
   Play,
@@ -116,6 +117,8 @@ export default function KnowledgeDetailPage() {
 
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [listRefreshHint, setListRefreshHint] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -177,6 +180,20 @@ export default function KnowledgeDetailPage() {
     };
   }, [knowledgeId, loadDocuments]);
 
+  const handleRefreshDocuments = useCallback(async () => {
+    if (!knowledgeId) return;
+    setRefreshing(true);
+    setActionError(null);
+    try {
+      await loadDocuments();
+      setListRefreshHint(null);
+    } catch {
+      setActionError("刷新失败，请稍后重试");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [knowledgeId, loadDocuments]);
+
   const statusBadgeClass = useMemo(() => {
     const map: Record<DocumentStatus, string> = {
       pending:
@@ -227,12 +244,16 @@ export default function KnowledgeDetailPage() {
       const json = (await res.json()) as { code?: number; message?: string };
       if (json.code !== 200) {
         setActionError(json.message ?? "提交处理失败");
+        await loadDocuments();
+        return;
       }
+      setListRefreshHint(
+        "处理任务已提交，请点击上方「刷新」按钮重新获取文档列表状态。",
+      );
     } catch {
       setActionError("网络错误，请稍后重试");
+      await loadDocuments();
     }
-
-    await loadDocuments();
   }
 
   async function onReprocessDocument(docId: string) {
@@ -252,12 +273,16 @@ export default function KnowledgeDetailPage() {
       const json = (await res.json()) as { code?: number; message?: string };
       if (json.code !== 200) {
         setActionError(json.message ?? "重新处理失败");
+        await loadDocuments();
+        return;
       }
+      setListRefreshHint(
+        "重新处理已提交，请点击上方「刷新」按钮重新获取文档列表状态。",
+      );
     } catch {
       setActionError("网络错误，请稍后重试");
+      await loadDocuments();
     }
-
-    await loadDocuments();
   }
 
   async function onViewChunks(docId: string, fileName: string) {
@@ -372,6 +397,27 @@ export default function KnowledgeDetailPage() {
 
             <Button
               type="button"
+              variant="outline"
+              className="h-10 rounded-xl"
+              disabled={refreshing || loading}
+              onClick={() => {
+                void handleRefreshDocuments();
+              }}
+            >
+              {refreshing ? (
+                <Loader2
+                  className="animate-spin"
+                  data-icon="inline-start"
+                  aria-hidden
+                />
+              ) : (
+                <RefreshCw data-icon="inline-start" aria-hidden />
+              )}
+              刷新
+            </Button>
+
+            <Button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
               className="h-10 rounded-xl"
             >
@@ -383,15 +429,30 @@ export default function KnowledgeDetailPage() {
 
         <Separator className="mb-4" />
 
-        {actionError ? (
-          <Alert
-            variant="destructive"
-            className="mb-4 rounded-xl border border-red-200/80 bg-red-50/90"
-          >
-            <AlertDescription className="text-sm text-red-800">
-              {actionError}
-            </AlertDescription>
-          </Alert>
+        {actionError || listRefreshHint ? (
+          <div className="mb-4 flex flex-col gap-3">
+            {actionError ? (
+              <Alert
+                variant="destructive"
+                className="rounded-xl border border-red-200/80 bg-red-50/90"
+              >
+                <AlertDescription className="text-sm text-red-800">
+                  {actionError}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {listRefreshHint ? (
+              <Alert
+                variant="default"
+                className="rounded-xl border border-sky-200/80 bg-sky-50/80"
+              >
+                <Info aria-hidden />
+                <AlertDescription className="text-sm text-sky-900">
+                  {listRefreshHint}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
         ) : null}
 
         {/* 内容 */}
