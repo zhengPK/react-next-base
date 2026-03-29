@@ -65,10 +65,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 USER nextjs
 
 # 声明容器对外提供服务的端口（文档用途，实际映射用 docker run -p）
-EXPOSE 8080
+EXPOSE 3000
 
 # Next 监听端口；绑定到所有网卡以便容器外访问
-ENV PORT=8080
+ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
 # 容器启动命令：运行 standalone 生成的 Node 服务入口
