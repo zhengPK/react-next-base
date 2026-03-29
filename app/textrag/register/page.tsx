@@ -117,7 +117,7 @@ export default function RegisterPage() {
         throw new Error("注册失败");
       }
       const data = await res.json();
-      if (data.status === "success") {
+      if (data.code === 200) {
         router.push("/textrag/login?redirect=redirect");
       } else {
         setFormError(data.message);

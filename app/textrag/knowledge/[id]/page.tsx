@@ -1,18 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { FileUp, Loader2, Trash2, Wand2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -23,17 +18,7 @@ import {
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
 
-type KnowledgeItem = {
-  id: string;
-  name: string;
-  description?: string;
-  coverFileName?: string;
-  chunkSize?: number;
-  chunkOverlap?: number;
-  docCount: number;
-  createdAt: number;
-  updatedAt: number;
-};
+import { apiFetch } from "@/lib/auth";
 
 type DocumentStatus = "pending" | "processing" | "done";
 
@@ -42,19 +27,49 @@ type KnowledgeDocument = {
   knowledgeId: string;
   fileName: string;
   status: DocumentStatus;
-  chunkCount: number;
+  chunkCount: number | string;
   fileSize: number;
-  createdAt: number;
-  updatedAt: number;
+  createdAt: number | string;
+  updatedAt: number | string;
 };
 
-type DocumentStore = Record<string, KnowledgeDocument[]>;
+type ApiDocumentItem = {
+  id: string;
+  kb_id: string;
+  name: string;
+  file_size: number;
+  chunk_count: number | string;
+  status: string;
+  created_at?: number | string;
+  updated_at?: number | string;
+};
 
-const KNOWLEDGE_KEY = "textrag_knowledge_items";
-const DOCS_KEY = "textrag_knowledge_documents";
+type KbDetailData = {
+  items: ApiDocumentItem[];
+  pagination?: { total: number; page: number; page_size: number };
+};
 
-function uid() {
-  return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+function mapApiDocumentToRow(
+  raw: ApiDocumentItem,
+  knowledgeId: string,
+): KnowledgeDocument {
+  const statusMap: Record<string, DocumentStatus> = {
+    pending: "pending",
+    processing: "processing",
+    completed: "done",
+    failed: "pending",
+  };
+  const status = statusMap[raw.status] ?? "pending";
+  return {
+    id: raw.id,
+    knowledgeId: raw.kb_id ?? knowledgeId,
+    fileName: raw.name,
+    status,
+    chunkCount: raw.chunk_count ?? 0,
+    fileSize: Number(raw.file_size ?? 0),
+    createdAt: raw.created_at || "",
+    updatedAt: raw.updated_at || "",
+  };
 }
 
 function formatBytes(bytes: number) {
@@ -68,139 +83,107 @@ function formatBytes(bytes: number) {
 
 export default function KnowledgeDetailPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const knowledgeName = searchParams.get("name");
   const knowledgeId = params.id;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [knowledge, setKnowledge] = useState<KnowledgeItem | null>(null);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const loadDocuments = useCallback(async () => {
     if (!knowledgeId) return;
-
-    setLoading(true);
-    try {
-      const rawKnowledge = localStorage.getItem(KNOWLEDGE_KEY);
-      const list = rawKnowledge
-        ? (JSON.parse(rawKnowledge) as KnowledgeItem[])
-        : [];
-      const found = Array.isArray(list)
-        ? list.find((x) => x.id === knowledgeId) ?? null
-        : null;
-      setKnowledge(found);
-
-      const rawDocs = localStorage.getItem(DOCS_KEY);
-      const parsed: unknown = rawDocs ? JSON.parse(rawDocs) : {};
-      const docStore: DocumentStore =
-        parsed && typeof parsed === "object" ? (parsed as DocumentStore) : {};
-      const perKnowledge = docStore[knowledgeId] ?? [];
-      setDocuments(Array.isArray(perKnowledge) ? perKnowledge : []);
-    } catch {
-      setKnowledge(null);
+    const res = await apiFetch(`/textRag/kb/detail/${knowledgeId}`, {
+      method: "GET",
+    });
+    const json = (await res.json()) as {
+      code?: number;
+      data?: KbDetailData;
+    };
+    if (json.code === 200 && json.data?.items) {
+      setDocuments(
+        json.data.items.map((row) => mapApiDocumentToRow(row, knowledgeId)),
+      );
+    } else {
       setDocuments([]);
-    } finally {
-      setLoading(false);
     }
   }, [knowledgeId]);
 
-  const statusBadgeVariant = useMemo(() => {
-    const map: Record<DocumentStatus, "default" | "secondary" | "destructive"> = {
-      pending: "secondary",
-      processing: "default",
-      done: "default",
+  useEffect(() => {
+    if (!knowledgeId) {
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      setLoading(true);
+      try {
+        await loadDocuments();
+      } catch {
+        if (!cancelled) {
+          setDocuments([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
     };
+  }, [knowledgeId, loadDocuments]);
+
+  const statusBadgeVariant = useMemo(() => {
+    const map: Record<DocumentStatus, "default" | "secondary" | "destructive"> =
+      {
+        pending: "secondary",
+        processing: "default",
+        done: "default",
+      };
     return map;
   }, []);
 
-  function persistDocuments(next: KnowledgeDocument[]) {
-    setDocuments(next);
-
-    const rawDocs = localStorage.getItem(DOCS_KEY);
-    const parsed: unknown = rawDocs ? JSON.parse(rawDocs) : {};
-    const nextMap: DocumentStore =
-      parsed && typeof parsed === "object" ? { ...(parsed as DocumentStore) } : {};
-    nextMap[knowledgeId] = next;
-    localStorage.setItem(DOCS_KEY, JSON.stringify(nextMap));
-
-    // 同步更新知识库 docCount（保证回到列表页数量正确）
-    if (knowledgeId) {
-      const rawKnowledge = localStorage.getItem(KNOWLEDGE_KEY);
-      const list = rawKnowledge ? (JSON.parse(rawKnowledge) as KnowledgeItem[]) : [];
-      if (Array.isArray(list)) {
-        const now = Date.now();
-        const nextKnowledge = list.map((it) => {
-          if (it.id !== knowledgeId) return it;
-          return { ...it, docCount: next.length, updatedAt: now };
-        });
-        localStorage.setItem(KNOWLEDGE_KEY, JSON.stringify(nextKnowledge));
-        setKnowledge((prev) => {
-          if (!prev) return prev;
-          return { ...prev, docCount: next.length, updatedAt: now };
-        });
-      }
-    }
-  }
-
-  function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     if (!knowledgeId || files.length === 0) return;
 
-    const now = Date.now();
-    const next: KnowledgeDocument[] = files.map((f) => ({
-      id: uid(),
-      knowledgeId,
-      fileName: f.name,
-      status: "pending",
-      chunkCount: 0,
-      fileSize: f.size,
-      createdAt: now,
-      updatedAt: now,
-    }));
+    for (const f of files) {
+      const fd = new FormData();
+      fd.append("file", f);
+      await apiFetch(`/textRag/documents/${knowledgeId}`, {
+        method: "POST",
+        body: fd,
+      });
+    }
 
-    persistDocuments([...documents, ...next]);
+    await loadDocuments();
 
-    // 允许连续上传同名文件
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function onProcessDocument(docId: string) {
+  async function onProcessDocument(docId: string) {
     if (!knowledgeId) return;
 
-    const now = Date.now();
     const doc = documents.find((d) => d.id === docId);
     if (!doc) return;
     if (doc.status !== "pending") return;
 
-    const processingNext: KnowledgeDocument[] = documents.map(
-      (d): KnowledgeDocument =>
-        d.id === docId ? { ...d, status: "processing", updatedAt: now } : d
+    setDocuments((prev) =>
+      prev.map((d) => (d.id === docId ? { ...d, status: "processing" } : d)),
     );
-    persistDocuments(processingNext);
 
-    // 模拟“解析/分块/向量化”
-    window.setTimeout(() => {
-      const doneNext: KnowledgeDocument[] = processingNext.map(
-        (d): KnowledgeDocument => {
-        if (d.id !== docId) return d;
-        const estimatedChunks = Math.max(
-          1,
-          Math.round(d.fileSize / 1024 / 3)
-        );
-        return {
-          ...d,
-          status: "done",
-          chunkCount: estimatedChunks,
-          updatedAt: Date.now(),
-        };
-      });
-      persistDocuments(doneNext);
-    }, 1200);
+    await apiFetch(`/textRag/documents/${docId}/process`, { method: "POST" });
+
+    await loadDocuments();
   }
 
   function onDeleteDocument(docId: string) {
-    const next = documents.filter((d) => d.id !== docId);
-    persistDocuments(next);
+    setDocuments((prev) => prev.filter((d) => d.id !== docId));
   }
 
   if (!knowledgeId) {
@@ -224,9 +207,7 @@ export default function KnowledgeDetailPage() {
             知识库
           </Link>
           <span>/</span>
-          <span className="text-neutral-700">
-            {knowledge?.name ?? `知识库${knowledgeId}`}
-          </span>
+          <span className="text-neutral-700">{`${knowledgeName || ""}`}</span>
         </div>
 
         {/* 标题行 */}
@@ -319,7 +300,10 @@ export default function KnowledgeDetailPage() {
                               onClick={() => onProcessDocument(d.id)}
                             >
                               {d.status === "processing" ? (
-                                <Loader2 className="size-4 animate-spin" aria-hidden />
+                                <Loader2
+                                  className="size-4 animate-spin"
+                                  aria-hidden
+                                />
                               ) : (
                                 <Wand2 data-icon="inline-start" aria-hidden />
                               )}
@@ -349,4 +333,3 @@ export default function KnowledgeDetailPage() {
     </div>
   );
 }
-
