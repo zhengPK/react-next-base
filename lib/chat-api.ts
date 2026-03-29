@@ -112,11 +112,54 @@ export type StreamTextRagChatOptions = {
   max_tokens?: number;
   /** 后端 textRag/chat 使用的会话 id；不传时由后端新建会话（SSE 无回传 id，前端应优先显式创建会话） */
   session_id?: string;
+  /** 若传入则调用 POST /textRag/chat/rag/<kb_id>（知识库对话），否则为 POST /textRag/chat */
+  kb_id?: string;
   signal?: AbortSignal;
   onChunk?: (chunk: ChatSsePayload) => void;
   /** 仅聚合 type===content 的文本增量 */
   onContentDelta?: (delta: string) => void;
 };
+
+/** 后端 kb list 单页结构（与 knowledgebase 列表一致） */
+export type KnowledgeBaseListItemApi = {
+  id: string;
+  name: string;
+};
+
+export type KnowledgeBaseListPageApi = {
+  items: KnowledgeBaseListItemApi[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+/** 拉取当前用户全部知识库（自动翻页，kb/list 单页上限由后端 max_page_size 决定） */
+export async function listAllKnowledgeBases(): Promise<KnowledgeBaseListItemApi[]> {
+  const all: KnowledgeBaseListItemApi[] = [];
+  let page = 1;
+  for (;;) {
+    const q = new URLSearchParams({
+      page: String(page),
+      page_size: "10",
+      sort_by: "updated_at",
+      sort_order: "desc",
+    });
+    const res = await apiFetch(`/textRag/kb/list?${q.toString()}`);
+    const json = await readApiJson<KnowledgeBaseListPageApi>(res);
+    if (!res.ok || json.code !== 200 || json.data == null) {
+      throw new Error(json.message || "获取知识库列表失败");
+    }
+    const { items, total, page_size } = json.data;
+    for (const it of items) {
+      if (it?.id && it?.name != null) {
+        all.push({ id: it.id, name: it.name });
+      }
+    }
+    if (items.length < page_size || all.length >= total) break;
+    page += 1;
+  }
+  return all;
+}
 
 function parseSseDataLine(line: string): string | null {
   const prefix = "data:";
@@ -126,16 +169,21 @@ function parseSseDataLine(line: string): string | null {
 }
 
 /**
- * 调用 POST /textRag/chat，按 SSE 解析流式块。
- * 成功时以 [DONE] 或 type===done 结束；HTTP 非 2xx 时解析 JSON message。
+ * 流式对话：未传 kb_id 时 POST /textRag/chat；传入 kb_id 时 POST /textRag/chat/rag/<kb_id>。
+ * 按 SSE 解析流式块；成功时以 [DONE] 或 type===done 结束；HTTP 非 2xx 时解析 JSON message。
  */
 export async function streamTextRagChat(
   question: string,
   options: StreamTextRagChatOptions = {},
 ): Promise<void> {
-  const { max_tokens, session_id, signal, onChunk, onContentDelta } = options;
+  const { max_tokens, session_id, kb_id, signal, onChunk, onContentDelta } =
+    options;
 
-  const res = await apiFetch("/textRag/chat", {
+  const path = kb_id
+    ? `/textRag/chat/rag/${encodeURIComponent(kb_id)}`
+    : "/textRag/chat";
+
+  const res = await apiFetch(path, {
     method: "POST",
     body: JSON.stringify({
       question,

@@ -22,6 +22,7 @@ import {
   deleteAllChatSessions,
   deleteChatSession,
   getChatSession,
+  listAllKnowledgeBases,
   listChatSessions,
   streamTextRagChat,
   type ChatMessageApi,
@@ -49,19 +50,8 @@ type ChatSession = {
   updatedAt: number;
 };
 
-const KNOWLEDGE_KEY = "textrag_knowledge_items";
-
 function uid() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-function safeParseJson<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
 }
 
 function safeDate(iso?: string | null): number {
@@ -90,6 +80,9 @@ function mapApiSession(s: ChatSessionApi, messages: ChatMessage[] = []): ChatSes
   };
 }
 
+/** Select 用：与真实知识库 id 不冲突的哨兵，表示不绑定知识库、直连大模型 */
+const NO_KNOWLEDGE_SELECT_VALUE = "__no_knowledge__";
+
 export default function ChatPage() {
   const [knowledgeOptions, setKnowledgeOptions] = useState<KnowledgeItem[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -110,6 +103,8 @@ export default function ChatPage() {
     title: string;
   } | null>(null);
   const [clearAllDialogOpen, setClearAllDialogOpen] = useState(false);
+  const [kbListLoading, setKbListLoading] = useState(true);
+  const [kbListError, setKbListError] = useState<string | null>(null);
 
   const draftTrimmed = draft.trim();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -193,12 +188,25 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    const knowledgeRaw = localStorage.getItem(KNOWLEDGE_KEY);
-    const knowledgeItems = safeParseJson<KnowledgeItem[]>(knowledgeRaw, []);
-    const t = window.setTimeout(() => {
-      setKnowledgeOptions(knowledgeItems);
-    }, 0);
-    return () => window.clearTimeout(t);
+    let cancelled = false;
+    setKbListError(null);
+    setKbListLoading(true);
+    void (async () => {
+      try {
+        const items = await listAllKnowledgeBases();
+        if (cancelled) return;
+        setKnowledgeOptions(items);
+      } catch (e) {
+        if (cancelled) return;
+        setKbListError(e instanceof Error ? e.message : "加载知识库列表失败");
+        setKnowledgeOptions([]);
+      } finally {
+        if (!cancelled) setKbListLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -206,13 +214,15 @@ export default function ChatPage() {
   }, [loadSessionList]);
 
   useEffect(() => {
-    if (!knowledgeOptions.length) return;
-    if (selectedKnowledgeId) return;
-    const t = window.setTimeout(() => {
-      setSelectedKnowledgeId(knowledgeOptions[0].id);
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [knowledgeOptions, selectedKnowledgeId]);
+    if (!knowledgeOptions.length) {
+      setSelectedKnowledgeId(null);
+      return;
+    }
+    setSelectedKnowledgeId((cur) => {
+      if (cur && knowledgeOptions.some((k) => k.id === cur)) return cur;
+      return null;
+    });
+  }, [knowledgeOptions]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -230,6 +240,7 @@ export default function ChatPage() {
       const next = mapApiSession(created, []);
       setSessions((prev) => [next, ...prev.filter((s) => s.id !== created.id)]);
       setActiveSessionId(created.id);
+      setSelectedKnowledgeId(null);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "新建会话失败");
     } finally {
@@ -335,6 +346,7 @@ export default function ChatPage() {
     try {
       await streamTextRagChat(question, {
         session_id: sessionId,
+        ...(selectedKnowledgeId ? { kb_id: selectedKnowledgeId } : {}),
         signal: ac.signal,
         onContentDelta: (delta) => {
           setSessions((prev) =>
@@ -417,6 +429,11 @@ export default function ChatPage() {
             {actionError ? (
               <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/80 p-3 text-xs text-amber-900">
                 {actionError}
+              </div>
+            ) : null}
+            {kbListError ? (
+              <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/80 p-3 text-xs text-amber-900">
+                知识库列表：{kbListError}
               </div>
             ) : null}
 
@@ -508,16 +525,35 @@ export default function ChatPage() {
               </div>
 
               <div className="min-w-[240px]">
-                <Select value={selectedKnowledgeId ?? undefined} onValueChange={setSelectedKnowledgeId}>
+                <Select
+                  value={selectedKnowledgeId ?? NO_KNOWLEDGE_SELECT_VALUE}
+                  onValueChange={(v) =>
+                    setSelectedKnowledgeId(v === NO_KNOWLEDGE_SELECT_VALUE ? null : v)
+                  }
+                  disabled={kbListLoading}
+                >
                   <SelectTrigger className="rounded-xl bg-white/90">
-                    <SelectValue placeholder="选择知识库" />
+                    <SelectValue
+                      placeholder={
+                        kbListLoading
+                          ? "加载知识库…"
+                          : knowledgeOptions.length === 0
+                            ? "暂无知识库（可不选）"
+                            : "选择知识库"
+                      }
+                    >
+                      {(v) => {
+                        if (kbListLoading) return "加载知识库…";
+                        if (v === NO_KNOWLEDGE_SELECT_VALUE || v == null) {
+                          return "未选择知识库";
+                        }
+                        const name = knowledgeOptions.find((k) => k.id === v)?.name;
+                        return name?.trim() ? name : "知识库不可用";
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="rounded-xl">
-                    {knowledgeOptions.length === 0 ? (
-                      <SelectItem value="" disabled>
-                        -- 请选择知识库 --
-                      </SelectItem>
-                    ) : null}
+                    <SelectItem value={NO_KNOWLEDGE_SELECT_VALUE}>未选择知识库</SelectItem>
                     {knowledgeOptions.map((k) => (
                       <SelectItem key={k.id} value={k.id}>
                         {k.name}
