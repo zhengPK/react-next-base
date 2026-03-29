@@ -3,8 +3,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { FileUp, Loader2, Trash2, Wand2 } from "lucide-react";
+import {
+  FileText,
+  FileUp,
+  LayoutList,
+  Loader2,
+  Play,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,9 +38,14 @@ import {
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
 
+import {
+  DocumentChunksDialog,
+  type DocumentChunkRow,
+} from "../_components/document-chunks-dialog";
+
 import { apiFetch } from "@/lib/auth";
 
-type DocumentStatus = "pending" | "processing" | "done";
+type DocumentStatus = "pending" | "processing" | "done" | "failed";
 
 type KnowledgeDocument = {
   id: string;
@@ -57,7 +82,7 @@ function mapApiDocumentToRow(
     pending: "pending",
     processing: "processing",
     completed: "done",
-    failed: "pending",
+    failed: "failed",
   };
   const status = statusMap[raw.status] ?? "pending";
   return {
@@ -91,6 +116,20 @@ export default function KnowledgeDetailPage() {
 
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    fileName: string;
+  } | null>(null);
+
+  const [chunksOpen, setChunksOpen] = useState(false);
+  const [chunksLoading, setChunksLoading] = useState(false);
+  const [chunksDoc, setChunksDoc] = useState<{
+    id: string;
+    fileName: string;
+  } | null>(null);
+  const [chunks, setChunks] = useState<DocumentChunkRow[]>([]);
 
   const loadDocuments = useCallback(async () => {
     if (!knowledgeId) return;
@@ -138,13 +177,16 @@ export default function KnowledgeDetailPage() {
     };
   }, [knowledgeId, loadDocuments]);
 
-  const statusBadgeVariant = useMemo(() => {
-    const map: Record<DocumentStatus, "default" | "secondary" | "destructive"> =
-      {
-        pending: "secondary",
-        processing: "default",
-        done: "default",
-      };
+  const statusBadgeClass = useMemo(() => {
+    const map: Record<DocumentStatus, string> = {
+      pending:
+        "border-neutral-200 bg-neutral-100 text-neutral-700 hover:bg-neutral-100",
+      processing:
+        "border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-50",
+      done: "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-50",
+      failed:
+        "border-red-200 bg-red-50 text-red-800 hover:bg-red-50",
+    };
     return map;
   }, []);
 
@@ -171,19 +213,116 @@ export default function KnowledgeDetailPage() {
 
     const doc = documents.find((d) => d.id === docId);
     if (!doc) return;
-    if (doc.status !== "pending") return;
+    if (doc.status !== "pending" && doc.status !== "failed") return;
 
+    setActionError(null);
     setDocuments((prev) =>
       prev.map((d) => (d.id === docId ? { ...d, status: "processing" } : d)),
     );
 
-    await apiFetch(`/textRag/documents/${docId}/process`, { method: "POST" });
+    try {
+      const res = await apiFetch(`/textRag/documents/${docId}/process`, {
+        method: "POST",
+      });
+      const json = (await res.json()) as { code?: number; message?: string };
+      if (json.code !== 200) {
+        setActionError(json.message ?? "提交处理失败");
+      }
+    } catch {
+      setActionError("网络错误，请稍后重试");
+    }
 
     await loadDocuments();
   }
 
-  function onDeleteDocument(docId: string) {
-    setDocuments((prev) => prev.filter((d) => d.id !== docId));
+  async function onReprocessDocument(docId: string) {
+    if (!knowledgeId) return;
+    const doc = documents.find((d) => d.id === docId);
+    if (!doc || doc.status !== "done") return;
+
+    setActionError(null);
+    setDocuments((prev) =>
+      prev.map((d) => (d.id === docId ? { ...d, status: "processing" } : d)),
+    );
+
+    try {
+      const res = await apiFetch(`/textRag/documents/${docId}/process`, {
+        method: "POST",
+      });
+      const json = (await res.json()) as { code?: number; message?: string };
+      if (json.code !== 200) {
+        setActionError(json.message ?? "重新处理失败");
+      }
+    } catch {
+      setActionError("网络错误，请稍后重试");
+    }
+
+    await loadDocuments();
+  }
+
+  async function onViewChunks(docId: string, fileName: string) {
+    setActionError(null);
+    setChunksDoc({ id: docId, fileName });
+    setChunks([]);
+    setChunksOpen(true);
+    setChunksLoading(true);
+    try {
+      const res = await apiFetch(`/textRag/documents/${docId}/chunks`, {
+        method: "GET",
+      });
+      const json = (await res.json()) as {
+        code?: number;
+        data?: DocumentChunkRow[];
+        message?: string;
+      };
+      if (json.code === 200 && Array.isArray(json.data)) {
+        setChunks(json.data);
+      } else {
+        setChunks([]);
+        setActionError(json.message ?? "获取分块失败");
+      }
+    } catch {
+      setChunks([]);
+      setActionError("网络错误，无法加载分块");
+    } finally {
+      setChunksLoading(false);
+    }
+  }
+
+  function onChunksOpenChange(open: boolean) {
+    setChunksOpen(open);
+    if (!open) {
+      setChunksDoc(null);
+      setChunks([]);
+    }
+  }
+
+  function onRequestDeleteDocument(docId: string, fileName: string) {
+    setDeleteTarget({ id: docId, fileName });
+  }
+
+  async function onConfirmDeleteDocument() {
+    if (!knowledgeId || !deleteTarget) return;
+    const docId = deleteTarget.id;
+    setDeleteTarget(null);
+
+    setActionError(null);
+    setDeletingId(docId);
+    try {
+      const res = await apiFetch(`/textRag/documents/delete/${docId}`, {
+        method: "DELETE",
+      });
+      const json = (await res.json()) as { code?: number; message?: string };
+      if (json.code !== 200) {
+        setActionError(json.message ?? "删除失败");
+        return;
+      }
+      await loadDocuments();
+    } catch {
+      setActionError("网络错误，删除失败");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   if (!knowledgeId) {
@@ -244,6 +383,17 @@ export default function KnowledgeDetailPage() {
 
         <Separator className="mb-4" />
 
+        {actionError ? (
+          <Alert
+            variant="destructive"
+            className="mb-4 rounded-xl border border-red-200/80 bg-red-50/90"
+          >
+            <AlertDescription className="text-sm text-red-800">
+              {actionError}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         {/* 内容 */}
         <Card className="border border-[color-mix(in_oklch,var(--dream-ink)_10%,transparent)] bg-white/75 shadow-sm">
           <CardHeader className="pb-3">
@@ -266,7 +416,7 @@ export default function KnowledgeDetailPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>文件名称</TableHead>
+                      <TableHead>文档名称</TableHead>
                       <TableHead>状态</TableHead>
                       <TableHead>块数</TableHead>
                       <TableHead>文件大小</TableHead>
@@ -277,46 +427,108 @@ export default function KnowledgeDetailPage() {
                     {documents.map((d) => (
                       <TableRow key={d.id}>
                         <TableCell className="max-w-[18rem]">
-                          <span className="block truncate">{d.fileName}</span>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <FileText
+                              className="size-4 shrink-0 text-blue-600"
+                              strokeWidth={2}
+                              aria-hidden
+                            />
+                            <span className="truncate" title={d.fileName}>
+                              {d.fileName}
+                            </span>
+                          </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={statusBadgeVariant[d.status]}>
+                          <Badge
+                            variant="outline"
+                            className={statusBadgeClass[d.status]}
+                          >
                             {d.status === "pending"
                               ? "待处理"
                               : d.status === "processing"
                                 ? "处理中"
-                                : "已处理"}
+                                : d.status === "failed"
+                                  ? "失败"
+                                  : "已完成"}
                           </Badge>
                         </TableCell>
                         <TableCell>{d.chunkCount}</TableCell>
                         <TableCell>{formatBytes(d.fileSize)}</TableCell>
                         <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="rounded-xl"
-                              disabled={d.status !== "pending"}
-                              onClick={() => onProcessDocument(d.id)}
-                            >
-                              {d.status === "processing" ? (
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            {d.status === "done" ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="rounded-xl border-0 bg-sky-500 text-white shadow-sm hover:bg-sky-600"
+                                  onClick={() =>
+                                    onViewChunks(d.id, d.fileName)
+                                  }
+                                >
+                                  <LayoutList
+                                    data-icon="inline-start"
+                                    aria-hidden
+                                  />
+                                  查看分块
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="rounded-xl border-0 bg-amber-500 text-white shadow-sm hover:bg-amber-600"
+                                  onClick={() => onReprocessDocument(d.id)}
+                                >
+                                  <RefreshCw
+                                    data-icon="inline-start"
+                                    aria-hidden
+                                  />
+                                  重新处理
+                                </Button>
+                              </>
+                            ) : null}
+                            {d.status === "pending" || d.status === "failed" ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="rounded-xl border-0 bg-blue-600 text-white shadow-sm hover:bg-blue-700"
+                                onClick={() => onProcessDocument(d.id)}
+                              >
+                                <Play data-icon="inline-start" aria-hidden />
+                                处理
+                              </Button>
+                            ) : null}
+                            {d.status === "processing" ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="rounded-xl border-0 bg-blue-600 text-white opacity-70"
+                                disabled
+                              >
                                 <Loader2
                                   className="size-4 animate-spin"
                                   aria-hidden
                                 />
-                              ) : (
-                                <Wand2 data-icon="inline-start" aria-hidden />
-                              )}
-                              处理
-                            </Button>
+                                处理中
+                              </Button>
+                            ) : null}
                             <Button
                               type="button"
                               size="sm"
                               variant="destructive"
                               className="rounded-xl"
-                              onClick={() => onDeleteDocument(d.id)}
+                              disabled={deletingId === d.id}
+                              onClick={() =>
+                                onRequestDeleteDocument(d.id, d.fileName)
+                              }
                             >
-                              <Trash2 data-icon="inline-start" aria-hidden />
+                              {deletingId === d.id ? (
+                                <Loader2
+                                  className="size-4 animate-spin"
+                                  aria-hidden
+                                />
+                              ) : (
+                                <Trash2 data-icon="inline-start" aria-hidden />
+                              )}
                               删除
                             </Button>
                           </div>
@@ -329,6 +541,45 @@ export default function KnowledgeDetailPage() {
             </div>
           </CardContent>
         </Card>
+
+        <DocumentChunksDialog
+          open={chunksOpen}
+          onOpenChange={onChunksOpenChange}
+          fileName={chunksDoc?.fileName ?? ""}
+          loading={chunksLoading}
+          chunks={chunks}
+        />
+
+        <AlertDialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null);
+          }}
+        >
+          <AlertDialogContent className="sm:max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogMedia>
+                <Trash2 aria-hidden />
+              </AlertDialogMedia>
+              <AlertDialogTitle>删除文档</AlertDialogTitle>
+              <AlertDialogDescription>
+                确定删除文档「{deleteTarget?.fileName ?? ""}」？此操作不可恢复。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel type="button">取消</AlertDialogCancel>
+              <AlertDialogAction
+                type="button"
+                variant="destructive"
+                onClick={() => {
+                  void onConfirmDeleteDocument();
+                }}
+              >
+                删除
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );
