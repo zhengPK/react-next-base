@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
+  ArrowLeft,
   BookOpen,
   ChevronDown,
   Database,
@@ -11,7 +12,6 @@ import {
   LogIn,
   LogOut,
   MessageCircle,
-  Settings,
   User,
   UserPlus,
 } from "lucide-react";
@@ -86,15 +86,27 @@ export default function RootLayout({
           }}
         />
         <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-          <Link
-            href="/textrag"
-            className="flex shrink-0 items-center gap-2 font-[family-name:var(--font-syne)] text-lg font-bold tracking-tight text-white"
-          >
-            <span className="flex size-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/15">
-              <BookOpen className="size-5" strokeWidth={1.75} aria-hidden />
-            </span>
-            RAG Lite
-          </Link>
+          <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              nativeButton={false}
+              render={<Link href="/" />}
+              className="max-w-[min(100%,11rem)] shrink text-white/95 hover:bg-white/12 hover:text-white sm:max-w-none"
+            >
+              <ArrowLeft data-icon="inline-start" aria-hidden />
+              {/* <span className="truncate">返回梦想乐园</span> */}
+            </Button>
+            <Link
+              href="/textrag"
+              className="flex min-w-0 shrink items-center gap-2 font-[family-name:var(--font-syne)] text-lg font-bold tracking-tight text-white"
+            >
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/15">
+                <BookOpen className="size-5" strokeWidth={1.75} aria-hidden />
+              </span>
+              <span className="truncate">RAG Lite</span>
+            </Link>
+          </div>
 
           <nav
             className="hidden items-center gap-1 md:flex"
