@@ -17,7 +17,7 @@ export function getApiBaseUrl(): string {
     typeof process !== "undefined"
       ? process.env.NEXT_PUBLIC_API_BASE_URL
       : undefined;
-  const base = (raw && raw.trim()) || "http://localhost:5000";
+  const base = (raw && raw.trim()) || "http://81.70.184.14:5000";
   return base.replace(/\/$/, "");
 }
 
