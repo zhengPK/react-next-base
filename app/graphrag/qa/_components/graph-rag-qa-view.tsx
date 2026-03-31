@@ -1,20 +1,9 @@
 "use client";
 
-import { useId, useState } from "react";
-import { ArrowUp, CircleHelp, Eye, EyeOff } from "lucide-react";
+import { useCallback, useId, useState } from "react";
+import { ArrowUp, CircleHelp, Eye, EyeOff, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import {
   Field,
   FieldGroup,
@@ -33,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -40,11 +30,22 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  graphRagQa,
+  type GraphRagQaProvider,
+  type GraphRagQaSource,
+} from "@/lib/graphrag-api";
 import { cn } from "@/lib/utils";
 
 type ChatRole = "user" | "assistant";
 
-type ChatMessage = { id: string; role: ChatRole; content: string };
+type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  sources?: GraphRagQaSource[];
+  isError?: boolean;
+};
 
 const sliderCopper =
   "[&_[data-slot=slider-range]]:bg-[var(--dream-copper)] [&_[data-slot=slider-thumb]]:border-[var(--dream-copper)] [&_[data-slot=slider-thumb]]:ring-[color-mix(in_oklch,var(--dream-copper)_35%,transparent)]";
@@ -66,33 +67,79 @@ export function GraphRagQaView() {
   const [queryType, setQueryType] = useState("book");
   const [topK, setTopK] = useState(3);
   const [temperature, setTemperature] = useState(0.3);
-  const [provider, setProvider] = useState("volcengine");
+  const [provider, setProvider] = useState("deepseek");
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
-  const [modelName, setModelName] = useState("doubao-seed-1-6-250615");
+  const [modelName, setModelName] = useState("deepseek-chat");
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sending, setSending] = useState(false);
 
-  function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    const text = draft.trim();
-    if (!text) return;
-    setMessages((prev) => [
-      ...prev,
-      {
+  const handleSend = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const text = draft.trim();
+      if (!text || sending) return;
+      const userMsg: ChatMessage = {
         id: `u-${Date.now()}`,
         role: "user",
         content: text,
-      },
-    ]);
-    setDraft("");
-  }
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      setDraft("");
+      setSending(true);
+      try {
+        const data = await graphRagQa({
+          question: text,
+          query_type: queryType as "book" | "author",
+          top_k: topK,
+          temperature,
+          provider: provider as GraphRagQaProvider,
+          api_key: apiKey.trim() || null,
+          model: modelName.trim() || null,
+        });
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `a-${Date.now()}`,
+            role: "assistant",
+            content: data.answer,
+            sources: data.sources?.length ? data.sources : undefined,
+          },
+        ]);
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "请求失败，请稍后重试";
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `e-${Date.now()}`,
+            role: "assistant",
+            content: msg,
+            isError: true,
+          },
+        ]);
+      } finally {
+        setSending(false);
+      }
+    },
+    [
+      apiKey,
+      draft,
+      modelName,
+      provider,
+      queryType,
+      sending,
+      temperature,
+      topK,
+    ]
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
       <aside
         className="flex max-h-[min(100vh,720px)] w-full shrink-0 flex-col gap-6 overflow-y-auto border-border bg-[color-mix(in_oklch,var(--dream-ink)_2%,var(--background))] p-4 lg:max-h-none lg:w-80 lg:border-r"
-        aria-label="参数与历史"
+        aria-label="问答参数"
       >
         <div className="flex flex-col gap-2">
           <p className="text-xs font-semibold tracking-wide text-muted-foreground">
@@ -169,7 +216,7 @@ export function GraphRagQaView() {
                   setTopK(typeof next === "number" ? next : 3);
                 }}
                 min={1}
-                max={20}
+                max={10}
                 step={1}
                 className={cn("mt-3 w-full", sliderCopper)}
               />
@@ -208,7 +255,8 @@ export function GraphRagQaView() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    <SelectItem value="volcengine">volcengine</SelectItem>
+                    {/* <SelectItem value="volcengine">volcengine</SelectItem> */}
+                    <SelectItem value="deepseek">deepseek</SelectItem>
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -217,7 +265,7 @@ export function GraphRagQaView() {
             <Field>
               <div className="flex w-full items-center gap-1">
                 <FieldLabel htmlFor={apiKeyId} className="flex-1">
-                  火山引擎 API KEY
+                  {provider === "deepseek" ? "DeepSeek API KEY" : "火山引擎 API KEY"}
                 </FieldLabel>
                 <Tooltip>
                   <TooltipTrigger
@@ -234,7 +282,7 @@ export function GraphRagQaView() {
                     <CircleHelp />
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
-                    在火山引擎控制台创建 API Key，仅保存在本机浏览器会话中（示例占位，可接后端保管）。
+                    可选；留空则使用 graph-backend 服务端环境变量中的默认 Key。
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -266,7 +314,7 @@ export function GraphRagQaView() {
             <Field>
               <div className="flex w-full items-center gap-1">
                 <FieldLabel htmlFor={modelId} className="flex-1">
-                  火山引擎模型名称
+                  {provider === "deepseek" ? "DeepSeek 模型 ID" : "火山引擎模型名称"}
                 </FieldLabel>
                 <Tooltip>
                   <TooltipTrigger
@@ -283,7 +331,7 @@ export function GraphRagQaView() {
                     <CircleHelp />
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
-                    与火山引擎控制台中可用的推理端点模型 ID 保持一致。
+                    与所选服务商控制台中的模型 ID 一致；留空则用后端默认配置。
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -299,26 +347,6 @@ export function GraphRagQaView() {
           </FieldGroup>
           </form>
         </div>
-
-        <Card
-          size="sm"
-          className="border-[color-mix(in_oklch,var(--dream-teal)_18%,transparent)] bg-[color-mix(in_oklch,var(--dream-teal)_8%,var(--card))]"
-        >
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold text-[var(--dream-ink)]">
-              历史查询
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <Empty className="min-h-[100px] rounded-lg border border-dashed border-[color-mix(in_oklch,var(--dream-teal)_20%,transparent)] bg-[color-mix(in_oklch,var(--dream-teal)_4%,transparent)]">
-              <EmptyHeader>
-                <EmptyTitle className="text-muted-foreground">
-                  暂无历史查询记录
-                </EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          </CardContent>
-        </Card>
       </aside>
 
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -351,10 +379,24 @@ export function GraphRagQaView() {
                       "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
                       m.role === "user"
                         ? "bg-muted text-foreground"
-                        : "bg-[color-mix(in_oklch,var(--dream-teal)_8%,var(--background))] text-foreground ring-1 ring-[color-mix(in_oklch,var(--dream-teal)_15%,transparent)]"
+                        : m.isError
+                          ? "bg-destructive/10 text-destructive ring-1 ring-destructive/20"
+                          : "bg-[color-mix(in_oklch,var(--dream-teal)_8%,var(--background))] text-foreground ring-1 ring-[color-mix(in_oklch,var(--dream-teal)_15%,transparent)]"
                     )}
                   >
-                    {m.content}
+                    <p className="whitespace-pre-wrap">{m.content}</p>
+                    {m.role === "assistant" &&
+                    m.sources &&
+                    m.sources.length > 0 ? (
+                      <details className="mt-3 border-t border-[color-mix(in_oklch,var(--dream-teal)_18%,transparent)] pt-2">
+                        <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+                          检索引用（{m.sources.length} 条）
+                        </summary>
+                        <pre className="mt-2 max-h-48 overflow-auto rounded-md bg-muted/50 p-2 text-[11px] leading-snug text-muted-foreground">
+                          {JSON.stringify(m.sources, null, 2)}
+                        </pre>
+                      </details>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -377,11 +419,15 @@ export function GraphRagQaView() {
             <Button
               type="submit"
               size="icon"
-              className="size-11 shrink-0 rounded-xl bg-[var(--dream-copper)] text-white hover:bg-[var(--dream-copper-dim)] hover:text-white"
+              className="size-11 shrink-0 rounded-xl bg-[var(--dream-copper)] text-white hover:bg-[var(--dream-copper-dim)] hover:text-white disabled:opacity-60"
               aria-label="发送"
-              disabled={!draft.trim()}
+              disabled={!draft.trim() || sending}
             >
-              <ArrowUp data-icon="inline-start" aria-hidden />
+              {sending ? (
+                <Loader2 className="size-5 animate-spin" aria-hidden />
+              ) : (
+                <ArrowUp data-icon="inline-start" aria-hidden />
+              )}
             </Button>
           </div>
         </form>

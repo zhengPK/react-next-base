@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useId, useRef, useState } from "react";
-import { CircleHelp, CloudUpload, Link2 } from "lucide-react";
+import { CircleHelp, CloudUpload, Link2, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  graphRagImportCsv,
+  graphRagRefreshEmbeddings,
+} from "@/lib/graphrag-api";
 import { cn } from "@/lib/utils";
 
 const MAX_BYTES = 200 * 1024 * 1024;
@@ -45,10 +49,17 @@ function pickCsvFileList(list: FileList | null): File | null {
 
 export function GraphRagImportView() {
   const inputId = useId();
+  const clearId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [clearExisting, setClearExisting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<string | null>(null);
+  const [embeddingLoading, setEmbeddingLoading] = useState(false);
+  const [embeddingResult, setEmbeddingResult] = useState<string | null>(null);
+  const [embeddingError, setEmbeddingError] = useState<string | null>(null);
 
   const applyFile = useCallback((next: File | null) => {
     setError(null);
@@ -97,6 +108,39 @@ export function GraphRagImportView() {
     const related = e.relatedTarget as Node | null;
     if (related && e.currentTarget.contains(related)) return;
     setDragActive(false);
+  }, []);
+
+  const handleUpload = useCallback(async () => {
+    if (!file || uploading) return;
+    setError(null);
+    setUploadResult(null);
+    setUploading(true);
+    try {
+      const data = await graphRagImportCsv(file, clearExisting);
+      setUploadResult(
+        data.success
+          ? `导入成功：${data.message}`
+          : `导入完成（含错误）：${data.message}`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "上传失败");
+    } finally {
+      setUploading(false);
+    }
+  }, [file, clearExisting, uploading]);
+
+  const handleRefreshEmbeddings = useCallback(async () => {
+    setEmbeddingError(null);
+    setEmbeddingResult(null);
+    setEmbeddingLoading(true);
+    try {
+      const data = await graphRagRefreshEmbeddings();
+      setEmbeddingResult(data.message);
+    } catch (e) {
+      setEmbeddingError(e instanceof Error ? e.message : "向量刷新失败");
+    } finally {
+      setEmbeddingLoading(false);
+    }
   }, []);
 
   return (
@@ -224,6 +268,41 @@ export function GraphRagImportView() {
                     </span>
                   </p>
                 ) : null}
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                  <label
+                    htmlFor={clearId}
+                    className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
+                  >
+                    <input
+                      id={clearId}
+                      type="checkbox"
+                      checked={clearExisting}
+                      onChange={(e) => setClearExisting(e.target.checked)}
+                      className="size-4 rounded border-border accent-[var(--dream-copper)]"
+                    />
+                    导入前清空图数据库
+                  </label>
+                  <Button
+                    type="button"
+                    disabled={!file || uploading}
+                    onClick={handleUpload}
+                    className="inline-flex items-center gap-2 border-transparent bg-[var(--dream-copper)] text-white hover:bg-[var(--dream-copper-dim)] hover:text-white sm:ml-auto"
+                  >
+                    {uploading ? (
+                      <>
+                        <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                        上传中…
+                      </>
+                    ) : (
+                      "上传并导入"
+                    )}
+                  </Button>
+                </div>
+                {uploadResult ? (
+                  <p className="text-sm text-[var(--dream-teal)]" role="status">
+                    {uploadResult}
+                  </p>
+                ) : null}
                 {error ? (
                   <p className="text-sm text-destructive" role="alert">
                     {error}
@@ -241,13 +320,12 @@ export function GraphRagImportView() {
                 <h2 className="font-[family-name:var(--font-syne)] text-xl font-semibold tracking-tight text-[var(--dream-ink)] sm:text-2xl">
                   向量初始化
                 </h2>
-                <a
-                  href="#"
-                  className="inline-flex shrink-0 rounded-md text-muted-foreground transition hover:text-foreground"
-                  aria-label="向量初始化相关说明"
+                <span
+                  className="inline-flex shrink-0 text-muted-foreground"
+                  title="对应后端 POST /api/graphrag/embeddings/refresh"
                 >
-                  <Link2 aria-hidden />
-                </a>
+                  <Link2 aria-hidden className="size-4" />
+                </span>
               </div>
               <p className="text-sm leading-relaxed text-muted-foreground sm:text-base">
                 为数据库中的节点生成嵌入向量，此操作会为 Book 和 Author
@@ -256,10 +334,29 @@ export function GraphRagImportView() {
             </div>
             <Button
               type="button"
-              className="h-11 w-full border-transparent bg-[var(--dream-copper)] text-white hover:bg-[var(--dream-copper-dim)] hover:text-white"
+              disabled={embeddingLoading}
+              onClick={handleRefreshEmbeddings}
+              className="inline-flex h-11 w-full items-center justify-center gap-2 border-transparent bg-[var(--dream-copper)] text-white hover:bg-[var(--dream-copper-dim)] hover:text-white"
             >
-              开始生成向量
+              {embeddingLoading ? (
+                <>
+                  <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                  生成中…
+                </>
+              ) : (
+                "开始生成向量"
+              )}
             </Button>
+            {embeddingResult ? (
+              <p className="text-sm text-[var(--dream-teal)]" role="status">
+                {embeddingResult}
+              </p>
+            ) : null}
+            {embeddingError ? (
+              <p className="text-sm text-destructive" role="alert">
+                {embeddingError}
+              </p>
+            ) : null}
           </div>
         </TabsContent>
       </Tabs>
