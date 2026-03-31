@@ -8,7 +8,7 @@ export function getGraphRagApiBaseUrl(): string {
     typeof process !== "undefined"
       ? process.env.NEXT_PUBLIC_GRAPHRAG_API_URL
       : undefined;
-  const base = (raw && raw.trim()) || "http://127.0.0.1:5001";
+  const base = (raw && raw.trim()) || "http://81.70.184.14:5001";
   return base.replace(/\/$/, "");
 }
 
